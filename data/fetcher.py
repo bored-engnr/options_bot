@@ -8,16 +8,18 @@ class DataFetcher:
     def __init__(self, av_api_key=None):
         self.av_api_key = av_api_key
         self.last_av_call = 0
-        self.av_rate_limit = 12  # seconds between calls for free tier (5 calls per minute)
+        self.av_rate_limit = 12
 
     def fetch_historical_yfinance(self, symbol, start_date=None, end_date=None, interval="1d"):
-        """Fetch historical prices from Yahoo Finance."""
         ticker = yf.Ticker(symbol)
-        df = ticker.history(start=start_date, end=end_date, interval=interval)
+        # Fetch at least 2 years of data if no start_date to ensure ML has enough
+        if not start_date:
+            df = ticker.history(period="2y", interval=interval)
+        else:
+            df = ticker.history(start=start_date, end=end_date, interval=interval)
         return df
 
     def fetch_options_chain_yfinance(self, symbol, expiration):
-        """Fetch options chain from Yahoo Finance for a specific expiration."""
         ticker = yf.Ticker(symbol)
         opt = ticker.option_chain(expiration)
 
@@ -29,7 +31,6 @@ class DataFetcher:
 
         df = pd.concat([calls, puts])
 
-        # Standardize columns
         rename_map = {
             'strike': 'strike',
             'lastPrice': 'last_price',
@@ -47,12 +48,10 @@ class DataFetcher:
         return ticker.options
 
     def fetch_historical_alpha_vantage(self, symbol, interval="daily"):
-        """Fetch historical prices from Alpha Vantage with rate limiting."""
         if not self.av_api_key:
             logging.warning("Alpha Vantage API key not provided.")
             return pd.DataFrame()
 
-        # Simple rate limiting
         elapsed = time.time() - self.last_av_call
         if elapsed < self.av_rate_limit:
             time.sleep(self.av_rate_limit - elapsed)
@@ -61,13 +60,13 @@ class DataFetcher:
         try:
             if interval == "daily":
                 data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
-            else:
-                # Add more intervals as needed
+            elif interval == "intraday":
                 data, meta_data = ts.get_intraday(symbol=symbol, interval='5min', outputsize='full')
+            else:
+                data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
 
             self.last_av_call = time.time()
 
-            # Standardize AV columns to match YFinance
             data = data.rename(columns={
                 '1. open': 'Open',
                 '2. high': 'High',
@@ -80,8 +79,12 @@ class DataFetcher:
             logging.error(f"Error fetching from Alpha Vantage: {e}")
             return pd.DataFrame()
 
-    def get_data(self, symbol, start_date=None, end_date=None):
-        """Primary method to get historical data, using yfinance primarily."""
+    def get_data(self, symbol, start_date=None, end_date=None, use_av=False):
+        if use_av:
+            df = self.fetch_historical_alpha_vantage(symbol)
+            if not df.empty:
+                return df
+
         df = self.fetch_historical_yfinance(symbol, start_date, end_date)
         if df.empty and self.av_api_key:
             logging.info(f"YFinance failed for {symbol}, trying Alpha Vantage.")
