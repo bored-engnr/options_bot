@@ -12,7 +12,7 @@ class AdaptiveWeighting:
                 self.weights = np.array([0.20, 0.15, 0.15, 0.15, 0.35])
             else:
                 self.weights = np.array(initial_weights)
-
+        
         self.model_names = ['Black-Scholes', 'Monte Carlo', 'Binomial', 'Heston', 'Machine Learning']
         self.learning_rate = 0.05
 
@@ -23,10 +23,10 @@ class AdaptiveWeighting:
         new_weights = scores / np.sum(scores)
         self.weights = (1 - self.learning_rate) * self.weights + self.learning_rate * new_weights
         self.weights = self.weights / np.sum(self.weights)
-
+        
         if self.persistence_path:
             self.save_state()
-
+            
         return self.weights
 
     def get_weighted_price(self, predicted_prices):
