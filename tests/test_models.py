@@ -13,7 +13,7 @@ class TestModels(unittest.TestCase):
         self.T = 1/12 # 1 month
         self.r = 0.05
         self.sigma = 0.2
-
+        
     def test_black_scholes(self):
         bs = BlackScholesModel(self.S, self.K, self.T, self.r, self.sigma, 'call')
         price = bs.price()
@@ -44,11 +44,11 @@ class TestModels(unittest.TestCase):
         aw = AdaptiveWeighting()
         predicted = [2.5, 2.6, 2.4, 2.55, 2.7]
         weighted_before = aw.get_weighted_price(predicted)
-
+        
         actual = 2.65
         new_weights = aw.update_weights(actual, predicted)
         weighted_after = aw.get_weighted_price(predicted)
-
+        
         self.assertEqual(len(new_weights), 5)
         self.assertAlmostEqual(sum(new_weights), 1.0)
         print(f"Weighted Price Before: {weighted_before}, After: {weighted_after}")

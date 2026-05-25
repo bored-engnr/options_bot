@@ -15,10 +15,10 @@ class ReportGenerator:
         if strategy_results.empty:
             print("No results to generate report.")
             return
-
+            
         # Ensure it's a Series for quantstats
         returns = strategy_results['returns'] if 'returns' in strategy_results else strategy_results.iloc[:, 0]
-
+        
         output_file = os.path.join(self.output_dir, f"{ticker}_report.html")
         qs.reports.html(returns, output=output_file, title=f"Options Trading Bot Report - {ticker}")
         print(f"Report generated: {output_file}")

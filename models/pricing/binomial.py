@@ -21,17 +21,17 @@ class BinomialModel:
         u = np.exp(self.sigma * np.sqrt(dt))
         d = 1 / u
         q = (np.exp(self.r * dt) - d) / (u - d)
-
+        
         # Price tree at maturity
         S_T = self.S * (u ** np.arange(self.steps, -1, -1)) * (d ** np.arange(0, self.steps + 1))
-
+        
         if self.option_type == 'call':
             values = np.maximum(S_T - self.K, 0)
         else:
             values = np.maximum(self.K - S_T, 0)
-
+            
         # Step back through the tree
         for i in range(self.steps - 1, -1, -1):
             values = np.exp(-self.r * dt) * (q * values[:-1] + (1 - q) * values[1:])
-
+            
         return values[0]

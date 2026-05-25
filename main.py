@@ -12,7 +12,7 @@ import logging
 def run_backtest():
     start_date = datetime(2023, 1, 1)
     end_date = datetime(2023, 12, 31)
-
+    
     # Run backtest using Yahoo Finance data
     results = AdaptiveOptionsStrategy.backtest(
         YahooDataBacktesting,
@@ -24,13 +24,13 @@ def run_backtest():
             "risk_free_rate": Config.RISK_FREE_RATE
         }
     )
-
+    
     # Manually generate quantstats report if needed, though lumibot generates some
     # We can use the results from lumibot backtest
     # results is a DataFrame with strategy performance
     if not os.path.exists("reports"):
         os.makedirs("reports")
-
+    
     reporter = ReportGenerator(output_dir="reports")
     # Lumibot backtest returns a dict or dataframe depending on version
     # In recent versions it returns a lot of info.
@@ -43,7 +43,7 @@ def run_live(is_paper=True):
         Config.TRADIER_ACCESS_TOKEN,
         paper=is_paper
     )
-
+    
     strategy = AdaptiveOptionsStrategy(
         broker=broker,
         parameters={
@@ -52,20 +52,20 @@ def run_live(is_paper=True):
             "risk_free_rate": Config.RISK_FREE_RATE
         }
     )
-
+    
     trader = Trader()
     trader.add_strategy(strategy)
     trader.run_all()
 
 if __name__ == "__main__":
     import sys
-
+    
     # Setup logging
     logging.basicConfig(level=logging.INFO)
-
+    
     # Default to backtest if no args
     mode = sys.argv[1] if len(sys.argv) > 1 else "backtest"
-
+    
     if mode == "backtest":
         run_backtest()
     elif mode == "paper":
