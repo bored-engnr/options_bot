@@ -25,17 +25,21 @@ def run_backtest(ticker, start_date, end_date):
             "model_path": os.path.join("models", "ml", f"{ticker}_model.joblib")
         }
     )
-    
+
     # Generate QuantStats Report
     if results is not None:
         reporter = ReportGenerator()
-        # results in newer lumibot might be a dict containing 'strategy' or a dataframe
-        # Usually it's a dataframe of performance
+        df_results = None
         if isinstance(results, pd.DataFrame):
-            reporter.generate_quantstats_report(results, ticker=ticker)
+            df_results = results
         elif isinstance(results, dict) and 'strategy' in results:
-             # handle dict if applicable
-             pass
+            df_results = results['strategy']
+
+        if df_results is not None:
+            reporter.generate_quantstats_report(df_results, ticker=ticker)
+            # Also save trade log if available in results
+            if isinstance(results, dict) and 'trades' in results:
+                reporter.save_trade_log(pd.DataFrame(results['trades']))
 
     print(f"Backtest completed for {ticker}. Check logs/ and reports/ directories.")
 
@@ -58,10 +62,10 @@ if __name__ == "__main__":
     parser.add_argument("--ticker", default=Config.DEFAULT_SYMBOL)
     parser.add_argument("--start", type=parse_date, default="2023-01-01")
     parser.add_argument("--end", type=parse_date, default="2023-12-31")
-    
+
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-    
+
     if args.mode == "backtest":
         run_backtest(args.ticker, args.start, args.end)
     else:

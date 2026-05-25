@@ -7,10 +7,10 @@ import os
 
 class MLPredictor:
     def __init__(self, model_path="models/ml/trained_model.joblib"):
-        # Use absolute path to avoid confusion
         self.model_path = os.path.abspath(model_path)
         self.model = RandomForestRegressor(n_estimators=100)
         self.is_trained = False
+        self.feature_names = ['Close', 'sma_10', 'sma_50', 'volatility', 'Volume']
         self.load_model()
 
     def prepare_features(self, df, for_inference=False):
@@ -19,7 +19,7 @@ class MLPredictor:
         df['sma_10'] = df['Close'].rolling(window=10).mean()
         df['sma_50'] = df['Close'].rolling(window=50).mean()
         df['volatility'] = df['returns'].rolling(window=20).std()
-        
+
         if not for_inference:
             df['target'] = df['Close'].shift(-1)
             return df.dropna()
@@ -30,10 +30,10 @@ class MLPredictor:
         df = self.prepare_features(historical_df)
         if len(df) < 60:
             return False
-            
-        X = df[['Close', 'sma_10', 'sma_50', 'volatility', 'Volume']]
+
+        X = df[self.feature_names]
         y = df['target']
-        
+
         self.model.fit(X, y)
         self.is_trained = True
         self.save_model()
@@ -42,12 +42,9 @@ class MLPredictor:
     def predict_price(self, current_features):
         if not self.is_trained:
             return None
-            
-        required = ['Close', 'sma_10', 'sma_50', 'volatility', 'Volume']
-        if any(col not in current_features or pd.isna(current_features[col]) for col in required):
-            return None
 
-        X = np.array([current_features[c] for c in required]).reshape(1, -1)
+        # Fix UserWarning by using a DataFrame with feature names
+        X = pd.DataFrame([current_features[self.feature_names]])
         return self.model.predict(X)[0]
 
     def save_model(self):
@@ -55,7 +52,6 @@ class MLPredictor:
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
             joblib.dump(self.model, self.model_path)
             logging.info(f"Model saved to {self.model_path}")
-            print(f"DEBUG: Model saved to {self.model_path}")
         except Exception as e:
             logging.error(f"Error saving model: {e}")
 

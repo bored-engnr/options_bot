@@ -9,7 +9,7 @@ class DataFetcher:
     def __init__(self, av_api_key=None):
         self.av_api_key = av_api_key
         self.last_av_call = 0
-        self.av_rate_limit = 12 
+        self.av_rate_limit = 12
 
     def fetch_historical_yfinance(self, symbol, start_date=None, end_date=None, interval="1d"):
         ticker = yf.Ticker(symbol)
@@ -22,12 +22,12 @@ class DataFetcher:
     def fetch_options_chain_yfinance(self, symbol, expiration):
         ticker = yf.Ticker(symbol)
         opt = ticker.option_chain(expiration)
-        
+
         calls = opt.calls.copy()
         calls['option_type'] = 'call'
         puts = opt.puts.copy()
         puts['option_type'] = 'put'
-        
+
         df = pd.concat([calls, puts])
         rename_map = {
             'strike': 'strike',
@@ -61,7 +61,7 @@ class DataFetcher:
                 data, meta_data = ts.get_intraday(symbol=symbol, interval='5min', outputsize='full')
             else:
                 data, meta_data = ts.get_daily(symbol=symbol, outputsize='full')
-            
+
             self.last_av_call = time.time()
             data = data.rename(columns={'1. open': 'Open', '2. high': 'High', '3. low': 'Low', '4. close': 'Close', '5. volume': 'Volume'})
             return data

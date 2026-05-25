@@ -46,7 +46,7 @@ AV_API_KEY=your_alpha_vantage_key
 The bot is orchestrated through `main.py`.
 
 #### Backtesting
-Runs a historical simulation. 
+Runs a historical simulation.
 *Note: Since free data sources like Yahoo Finance do not provide historical option chains, the backtest uses synthetic option pricing (Black-Scholes proxy) to simulate and verify the bot's ensemble logic.*
 
 ```bash

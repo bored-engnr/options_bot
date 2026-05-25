@@ -49,11 +49,11 @@ class OptionsDB:
         df['symbol'] = symbol
         df = df.reset_index()
         df = df.rename(columns={'Date': 'timestamp', 'Datetime': 'timestamp'})
-        
+
         allowed_cols = ['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
         df.columns = [c.lower() for c in df.columns]
         df = df[[c for c in allowed_cols if c in df.columns]]
-        
+
         with sqlite3.connect(self.db_path) as conn:
             df.to_sql('temp_historical', conn, if_exists='replace', index=False)
             conn.execute("""
@@ -62,7 +62,7 @@ class OptionsDB:
             """)
             conn.execute("DROP TABLE temp_historical")
             conn.commit()
-            
+
     def save_options_chain(self, symbol, expiration, df):
         if df.empty:
             return
@@ -70,10 +70,10 @@ class OptionsDB:
         df['symbol'] = symbol
         df['expiration'] = expiration
         df['timestamp'] = pd.Timestamp.now()
-        
+
         allowed_cols = ['symbol', 'expiration', 'strike', 'option_type', 'last_price', 'bid', 'ask', 'volume', 'open_interest', 'implied_volatility', 'timestamp']
         df = df[[c for c in allowed_cols if c in df.columns]]
-        
+
         with sqlite3.connect(self.db_path) as conn:
             df.to_sql('temp_options', conn, if_exists='replace', index=False)
             conn.execute(f"""
@@ -92,7 +92,7 @@ class OptionsDB:
         if end_date:
             query += " AND timestamp <= ?"
             params.append(end_date)
-        
+
         with sqlite3.connect(self.db_path) as conn:
             return pd.read_sql(query, conn, params=params, parse_dates=['timestamp'])
 
@@ -103,7 +103,7 @@ class OptionsDB:
             query += " AND expiration = ?"
             params.append(expiration)
         query += " ORDER BY timestamp DESC"
-        
+
         with sqlite3.connect(self.db_path) as conn:
             df = pd.read_sql(query, conn, params=params, parse_dates=['expiration', 'timestamp'])
             if not df.empty:
