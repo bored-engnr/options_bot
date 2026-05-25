@@ -30,37 +30,37 @@ class AdaptiveOptionsStrategy(Strategy):
         self.underlying_asset = Asset(symbol=self.symbol, asset_type="stock")
         self.fetcher = DataFetcher(av_api_key=self.parameters["av_api_key"])
         self.db = OptionsDB()
-
+        
         model_dir = os.path.dirname(self.parameters["model_path"])
         weights_path = os.path.join(model_dir, f"{self.symbol}_weights.joblib")
-
+        
         self.ml_predictor = MLPredictor(model_path=self.parameters["model_path"])
         self.adaptive_weights = AdaptiveWeighting(persistence_path=weights_path)
-
-        self.sleeptime = "1D"
-        self.last_predictions = {}
-        self.trades_info = []
+        
+        self.sleeptime = "1D" 
+        self.last_predictions = {} 
+        self.trades_info = [] 
         self.iteration_count = 0
 
     def on_trading_iteration(self):
         historical_data = self.fetcher.get_data(self.symbol)
         if historical_data.empty: return
         self.db.save_historical_prices(self.symbol, historical_data)
-
+        
         # Optimize ML training: weekly
         if self.broker.name == "backtesting" and self.iteration_count % 5 == 0:
             self.ml_predictor.train(historical_data)
         self.iteration_count += 1
-
+        
         # Current Underlying Price
         current_price = self.get_last_price(self.underlying_asset)
-
+        
         # Target closest Friday expiry for day trading context
         current_dt = self.get_datetime().replace(tzinfo=None) if self.get_datetime().tzinfo else self.get_datetime()
         days_to_friday = (4 - current_dt.weekday()) % 7
         target_expiry_dt = current_dt + timedelta(days=days_to_friday)
         target_expiry = target_expiry_dt.strftime("%Y-%m-%d")
-
+        
         # Backtesting Limitation: yfinance doesn't provide historical option chains.
         # We use Black-Scholes as a synthetic proxy for historical option prices to test bot logic.
         # In live/paper, we'd fetch actual chains.
@@ -68,19 +68,19 @@ class AdaptiveOptionsStrategy(Strategy):
         K = round(current_price) # ATM strike
         T = max(1/365.0, (target_expiry_dt - current_dt).days / 365.0)
         r = self.parameters["risk_free_rate"]
-
+        
         # Calculate Model Prices
         bs_price = BlackScholesModel(current_price, K, T, r, sigma, 'call').price()
         mc_price = MonteCarloModel(current_price, K, T, r, sigma, 'call').price()
         bi_price = BinomialModel(current_price, K, T, r, sigma, 'call').price()
         he_price = HestonModel(current_price, K, T, r, 2.0, 0.04, 0.1, -0.7, sigma**2, 'call').price()
-
+        
         inference_row = self.ml_predictor.prepare_features(historical_data, for_inference=True)
         ml_pred = self.ml_predictor.predict_price(inference_row.iloc[0]) if not inference_row.empty else None
         ml_price = BlackScholesModel(ml_pred, K, T, r, sigma, 'call').price() if ml_pred else bs_price
-
+            
         predicted_prices = [bs_price, mc_price, bi_price, he_price, ml_price]
-
+        
         # Live/Paper Mode: Try to get actual market price
         market_price = bs_price # Default to fair value proxy for backtest
         if self.broker.name != "backtesting":
@@ -95,9 +95,9 @@ class AdaptiveOptionsStrategy(Strategy):
         if self.symbol in self.last_predictions:
             self.adaptive_weights.update_weights(market_price, self.last_predictions[self.symbol])
         self.last_predictions[self.symbol] = predicted_prices
-
+        
         weighted_price = self.adaptive_weights.get_weighted_price(predicted_prices)
-
+        
         # Option Asset Creation
         option_asset = Asset(
             symbol=self.symbol,
@@ -106,27 +106,27 @@ class AdaptiveOptionsStrategy(Strategy):
             strike=K,
             right="call"
         )
-
+        
         self.log_message(f">>> {current_dt.date()} | S={current_price:.2f} | K={K} | Opt_Mkt={market_price:.4f} | Fair={weighted_price:.4f}")
 
         pos = self.get_position(option_asset)
         quantity = pos.quantity if pos else 0
-
+        
         # Trading Logic
         if market_price < weighted_price * 0.95 and quantity == 0:
             cost = market_price * 100 * self.parameters["quantity"]
             if not Config.ALLOW_MARGIN and self.cash < cost:
                 return
-
+            
             self.log_message(f"EXEC: BUY {option_asset}")
             order = self.create_order(option_asset, self.parameters["quantity"], "buy")
             self.submit_order(order)
             self.trades_info.append({'asset': option_asset, 'type': 'buy', 'price': market_price, 'time': current_dt})
-
+            
         elif (market_price > weighted_price * 1.05 or (target_expiry_dt - current_dt).days < 1) and quantity > 0:
             buy_price = next((t['price'] for t in reversed(self.trades_info) if t['asset'] == option_asset and t['type'] == 'buy'), 0)
             profit = (market_price - buy_price) * 100 * self.parameters["quantity"]
-
+            
             self.log_message(f"EXEC: SELL {option_asset} | PROFIT: {profit:.2f}")
             order = self.create_order(option_asset, self.parameters["quantity"], "sell")
             self.submit_order(order)

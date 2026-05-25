@@ -25,7 +25,7 @@ def run_backtest(ticker, start_date, end_date):
             "model_path": os.path.join("models", "ml", f"{ticker}_model.joblib")
         }
     )
-
+    
     # Generate QuantStats Report
     if results is not None:
         reporter = ReportGenerator()
@@ -58,10 +58,10 @@ if __name__ == "__main__":
     parser.add_argument("--ticker", default=Config.DEFAULT_SYMBOL)
     parser.add_argument("--start", type=parse_date, default="2023-01-01")
     parser.add_argument("--end", type=parse_date, default="2023-12-31")
-
+    
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-
+    
     if args.mode == "backtest":
         run_backtest(args.ticker, args.start, args.end)
     else:
