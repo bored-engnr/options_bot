@@ -16,6 +16,6 @@ class Config:
     DEFAULT_SYMBOL = "SPY"
     QUANTITY = 100
     RISK_FREE_RATE = 0.05
-    
+
     # Global Margin Control
     ALLOW_MARGIN = False

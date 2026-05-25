@@ -22,7 +22,7 @@ class BlackScholesModel:
                 return max(0, self.S - self.K)
             else:
                 return max(0, self.K - self.S)
-        
+
         d1 = self._d1()
         d2 = self._d2()
         if self.option_type == 'call':

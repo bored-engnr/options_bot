@@ -27,14 +27,14 @@ class HestonModel:
 
         d = np.sqrt((self.rho * self.sigma * phi * 1j - b)**2 - self.sigma**2 * (2 * u * phi * 1j - phi**2))
         g = (b - self.rho * self.sigma * phi * 1j + d) / (b - self.rho * self.sigma * phi * 1j - d)
-        
+
         C = self.r * phi * 1j * self.T + a / self.sigma**2 * (
             (b - self.rho * self.sigma * phi * 1j + d) * self.T - 2 * np.log((1 - g * np.exp(d * self.T)) / (1 - g))
         )
         D = (b - self.rho * self.sigma * phi * 1j + d) / self.sigma**2 * (
             (1 - np.exp(d * self.T)) / (1 - g * np.exp(d * self.T))
         )
-        
+
         return np.exp(C + D * self.v0 + phi * 1j * np.log(self.S))
 
     def _probability(self, phi, j):
@@ -52,9 +52,9 @@ class HestonModel:
         # Integration to find P1 and P2
         P1 = 0.5 + 1/np.pi * quad(self._probability, 0, 100, args=(1,))[0]
         P2 = 0.5 + 1/np.pi * quad(self._probability, 0, 100, args=(2,))[0]
-        
+
         call_price = self.S * P1 - self.K * np.exp(-self.r * self.T) * P2
-        
+
         if self.option_type == 'call':
             return call_price
         else:

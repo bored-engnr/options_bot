@@ -16,14 +16,14 @@ class MonteCarloModel:
                 return max(0, self.S - self.K)
             else:
                 return max(0, self.K - self.S)
-        
+
         # Standard Geometric Brownian Motion paths
         z = np.random.standard_normal(self.simulations)
         ST = self.S * np.exp((self.r - 0.5 * self.sigma**2) * self.T + self.sigma * np.sqrt(self.T) * z)
-        
+
         if self.option_type == 'call':
             payoff = np.maximum(ST - self.K, 0)
         else:
             payoff = np.maximum(self.K - ST, 0)
-            
+
         return np.exp(-self.r * self.T) * np.mean(payoff)
