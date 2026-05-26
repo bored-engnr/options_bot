@@ -7,11 +7,17 @@ from lumibot.traders import Trader
 from strategy.options_strategy import AdaptiveOptionsStrategy
 from utils.config import Config
 from utils.reporting import ReportGenerator
+from data.ingestor import OptionsIngestor
 import os
 import pandas as pd
 
 def parse_date(date_str):
     return datetime.strptime(date_str, "%Y-%m-%d")
+
+def run_ingestion(ticker):
+    ingestor = OptionsIngestor()
+    ingestor.fetch_and_save_av_historical_options(ticker)
+    print(f"Ingestion process finished for {ticker}.")
 
 def run_backtest(ticker, start_date, end_date):
     results = AdaptiveOptionsStrategy.backtest(
@@ -26,18 +32,11 @@ def run_backtest(ticker, start_date, end_date):
         }
     )
 
-    # Generate QuantStats Report
     if results is not None:
         reporter = ReportGenerator()
-        df_results = None
-        if isinstance(results, pd.DataFrame):
-            df_results = results
-        elif isinstance(results, dict) and 'strategy' in results:
-            df_results = results['strategy']
-
+        df_results = results if isinstance(results, pd.DataFrame) else results.get('strategy')
         if df_results is not None:
             reporter.generate_quantstats_report(df_results, ticker=ticker)
-            # Also save trade log if available in results
             if isinstance(results, dict) and 'trades' in results:
                 reporter.save_trade_log(pd.DataFrame(results['trades']))
 
@@ -58,7 +57,7 @@ def run_live(ticker, mode):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Adaptive Options Trading Bot")
-    parser.add_argument("--mode", choices=["backtest", "paper", "live"], default="backtest")
+    parser.add_argument("--mode", choices=["backtest", "paper", "live", "ingest"], default="backtest")
     parser.add_argument("--ticker", default=Config.DEFAULT_SYMBOL)
     parser.add_argument("--start", type=parse_date, default="2023-01-01")
     parser.add_argument("--end", type=parse_date, default="2023-12-31")
@@ -68,5 +67,7 @@ if __name__ == "__main__":
 
     if args.mode == "backtest":
         run_backtest(args.ticker, args.start, args.end)
+    elif args.mode == "ingest":
+        run_ingestion(args.ticker)
     else:
         run_live(args.ticker, args.mode)

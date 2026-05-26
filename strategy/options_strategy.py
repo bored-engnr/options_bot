@@ -12,6 +12,7 @@ from utils.config import Config
 import pandas as pd
 import numpy as np
 import os
+import logging
 from datetime import datetime, timedelta
 
 class AdaptiveOptionsStrategy(Strategy):
@@ -39,95 +40,107 @@ class AdaptiveOptionsStrategy(Strategy):
 
         self.sleeptime = "1D"
         self.iteration_count = 0
-        self.last_predictions = {}
+        self.last_predictions_map = {} # {option_key: [preds]}
         self.trades_info = []
 
     def on_trading_iteration(self):
         historical_data = self.fetcher.get_data(self.symbol)
         if historical_data.empty: return
 
-        # Use Alpha Vantage past trades (intraday) if available to refine volatility
-        if self.parameters["av_api_key"]:
-            intraday = self.fetcher.fetch_past_trades_alpha_vantage(self.symbol)
-            if not intraday.empty:
-                # Better simulate operations: entry check based on intraday trend
-                last_5 = intraday.head(5)
-                if last_5['Close'].iloc[0] < last_5['Close'].iloc[-1]:
-                    # Price trending down intraday, maybe wait
-                    pass
+        current_dt = self.get_datetime().replace(tzinfo=None) if self.get_datetime().tzinfo else self.get_datetime()
+        current_price = self.get_last_price(self.underlying_asset)
+        r = self.parameters["risk_free_rate"]
 
         if self.broker.name == "backtesting" and self.iteration_count % 5 == 0:
             self.ml_predictor.train(historical_data)
         self.iteration_count += 1
 
-        current_price = self.get_last_price(self.underlying_asset)
-        current_dt = self.get_datetime().replace(tzinfo=None) if self.get_datetime().tzinfo else self.get_datetime()
+        # 1. Fetch Option Chain from DB (Cached)
+        chain = self.db.get_chain_for_date(self.symbol, current_dt)
 
-        days_to_friday = (4 - current_dt.weekday()) % 7
-        target_expiry_dt = current_dt + timedelta(days=days_to_friday)
-        target_expiry = target_expiry_dt.strftime("%Y-%m-%d")
+        if chain.empty and Config.USE_SYNTHETIC_PROXY:
+            strikes = [round(current_price * m, 2) for m in np.linspace(0.95, 1.05, 5)]
+            rows = []
+            for s in strikes:
+                rows.append({'strike': s, 'option_type': 'call', 'expiration': current_dt + timedelta(days=7), 'bid': 0, 'ask': 0, 'last_price': 0, 'implied_volatility': 0.20})
+            chain = pd.DataFrame(rows)
 
-        K = round(current_price)
-        T = max(1/365.0, (target_expiry_dt - current_dt).days / 365.0)
-        r = self.parameters["risk_free_rate"]
+        if chain.empty: return
 
-        # Calculate historical volatility from recent returns
-        returns = historical_data['Close'].pct_change().dropna()
-        sigma = returns.tail(30).std() * np.sqrt(252) if len(returns) >= 30 else 0.20
-
-        market_price = None
-        if self.broker.name != "backtesting" or not Config.USE_SYNTHETIC_PROXY:
-            try:
-                chain = self.fetcher.fetch_options_chain_yfinance(self.symbol, target_expiry)
-                if not chain.empty:
-                    opt_row = chain[chain['strike'] == K].iloc[0]
-                    market_price = (opt_row['bid'] + opt_row['ask']) / 2
-                    if market_price <= 0: market_price = opt_row['last_price']
-            except: pass
-
-        if market_price is None:
-            if Config.USE_SYNTHETIC_PROXY:
-                market_price = BlackScholesModel(current_price, K, T, r, sigma, 'call').price()
-            else:
-                return
-
-        # Models
-        bs_price = BlackScholesModel(current_price, K, T, r, sigma, 'call').price()
-        mc_price = MonteCarloModel(current_price, K, T, r, sigma, 'call').price()
-        bi_price = BinomialModel(current_price, K, T, r, sigma, 'call').price()
-        he_price = HestonModel(current_price, K, T, r, 2.0, 0.04, 0.1, -0.7, sigma**2, 'call').price()
+        # 2. Brute Force Analysis & Weight Update
+        best_undervalued_option = None
+        max_edge = -999
 
         inference_row = self.ml_predictor.prepare_features(historical_data, for_inference=True)
-        ml_pred = self.ml_predictor.predict_price(inference_row.iloc[0]) if not inference_row.empty else None
-        ml_price = BlackScholesModel(ml_pred, K, T, r, sigma, 'call').price() if ml_pred else bs_price
+        ml_underlying_pred = self.ml_predictor.predict_price(inference_row.iloc[0]) if not inference_row.empty else current_price
 
-        predicted_prices = [bs_price, mc_price, bi_price, he_price, ml_price]
-        if self.symbol in self.last_predictions:
-            self.adaptive_weights.update_weights(market_price, self.last_predictions[self.symbol])
-        self.last_predictions[self.symbol] = predicted_prices
-        weighted_price = self.adaptive_weights.get_weighted_price(predicted_prices)
+        for _, opt in chain.iterrows():
+            if opt['option_type'] != 'call': continue
 
-        option_asset = Asset(symbol=self.symbol, asset_type="option", expiration=target_expiry_dt, strike=K, right="call")
+            K = opt['strike']
+            opt_expiry = opt['expiration'].replace(tzinfo=None) if hasattr(opt['expiration'], 'replace') else opt['expiration']
+            T = max(1/365.0, (opt_expiry - current_dt).days / 365.0)
+            sigma = opt['implied_volatility'] if opt['implied_volatility'] > 0 else 0.20
 
-        print(f"CALL {self.symbol}@{K:.2f} for {market_price:.2f} at {current_dt.strftime('%Y-%m-%d %H:%M')}")
+            mkt_price = (opt['bid'] + opt['ask']) / 2
+            if mkt_price <= 0:
+                mkt_price = BlackScholesModel(current_price, K, T, r, sigma, 'call').price() if Config.USE_SYNTHETIC_PROXY else opt['last_price']
+            if mkt_price <= 0: continue
 
-        pos = self.get_position(option_asset)
-        quantity = pos.quantity if pos else 0
+            # Update weights if we have previous prediction for THIS strike/expiry
+            opt_key = f"{K}_{opt_expiry}"
+            if opt_key in self.last_predictions_map:
+                self.adaptive_weights.update_weights(mkt_price, self.last_predictions_map[opt_key])
 
-        if market_price < weighted_price * 0.95 and quantity == 0:
-            if not Config.ALLOW_MARGIN and self.cash < (market_price * 100 * self.parameters["quantity"]):
-                return
-            order = self.create_order(option_asset, self.parameters["quantity"], "buy")
-            self.submit_order(order)
-            self.trades_info.append({'asset': option_asset, 'type': 'buy', 'price': market_price, 'time': current_dt})
+            # Ensemble
+            bs = BlackScholesModel(current_price, K, T, r, sigma, 'call').price()
+            mc = MonteCarloModel(current_price, K, T, r, sigma, 'call').price()
+            bi = BinomialModel(current_price, K, T, r, sigma, 'call').price()
+            he = HestonModel(current_price, K, T, r, 2.0, 0.04, 0.1, -0.7, sigma**2, 'call').price()
+            ml = BlackScholesModel(ml_underlying_pred, K, T, r, sigma, 'call').price()
 
-        elif (market_price > weighted_price * 1.05 or (target_expiry_dt - current_dt).days < 1) and quantity > 0:
-            buy_price = next((t['price'] for t in reversed(self.trades_info) if t['asset'] == option_asset and t['type'] == 'buy'), 0)
-            profit = (market_price - buy_price) * 100 * self.parameters["quantity"]
-            order = self.create_order(option_asset, self.parameters["quantity"], "sell")
-            self.submit_order(order)
-            self.trades_info.append({'asset': option_asset, 'type': 'sell', 'price': market_price, 'time': current_dt, 'profit': profit})
+            preds = [bs, mc, bi, he, ml]
+            self.last_predictions_map[opt_key] = preds # Store for next iteration
+
+            fair_val = self.adaptive_weights.get_weighted_price(preds)
+            edge = (fair_val - mkt_price) / mkt_price if mkt_price > 0 else 0
+
+            if edge > max_edge:
+                max_edge = edge
+                best_undervalued_option = (opt, fair_val, mkt_price, preds)
+
+        # 3. Decision
+        if best_undervalued_option and max_edge > 0.05:
+            opt_data, fair_val, mkt_price, preds = best_undervalued_option
+            asset = Asset(symbol=self.symbol, asset_type="option", expiration=opt_data['expiration'], strike=opt_data['strike'], right="call")
+
+            print(f"CALL {self.symbol}@{opt_data['strike']:.2f} for {mkt_price:.2f} at {current_dt.strftime('%Y-%m-%d %H:%M')} (Edge: {max_edge:.2%})")
+
+            pos = self.get_position(asset)
+            if (pos is None or pos.quantity == 0) and (Config.ALLOW_MARGIN or self.cash > mkt_price * 100):
+                order = self.create_order(asset, self.parameters["quantity"], "buy")
+                self.submit_order(order)
+                self.trades_info.append({'asset': asset, 'type': 'buy', 'price': mkt_price, 'time': current_dt})
+
+        # 4. Sell Logic & Profit Reporting
+        positions = self.get_positions()
+        for p in positions:
+            if p.asset.asset_type == "option":
+                p_expiry = p.asset.expiration.replace(tzinfo=None) if p.asset.expiration.tzinfo else p.asset.expiration
+                if (p_expiry - current_dt).days <= 0:
+                    # Estimate sell price at expiration (intrinsic value)
+                    sell_price = max(0, current_price - p.asset.strike)
+                    buy_info = next((t for t in reversed(self.trades_info) if t['asset'] == p.asset and t['type'] == 'buy'), None)
+                    if buy_info:
+                        profit = (sell_price - buy_info['price']) * 100 * p.quantity
+                        self.log_message(f"PROFIT REPORT: {p.asset} | BUY: {buy_info['price']:.2f} | SELL: {sell_price:.2f} | NET: {profit:.2f}")
+                        self.trades_info.append({'asset': p.asset, 'type': 'sell', 'price': sell_price, 'time': current_dt, 'profit': profit})
+
+                    order = self.create_order(p.asset, p.quantity, "sell")
+                    self.submit_order(order)
 
     def teardown(self):
         self.ml_predictor.save_model()
         self.adaptive_weights.save_state()
+        total_profit = sum(t.get('profit', 0) for t in self.trades_info)
+        self.log_message(f"TOTAL BACKTEST PROFIT: {total_profit:.2f}")
